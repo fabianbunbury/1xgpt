@@ -56,11 +56,93 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
             d_model=config.d_model,
             mask_token_id=self.mask_token_id,
         )
+        
+        self.driving_command_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=1,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
 
+        self.joint_pos_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=1,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
+        self.l_hand_closure_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=1,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
+        self.r_hand_closure_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=1,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
+        self.neck_desired_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=1,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
+        
         cls = FixedMuReadout if config.use_mup else nn.Linear  # (Fixed)MuReadout might slow dow down compiled training?
         self.out_x_proj = cls(config.d_model, config.factored_vocab_size * config.num_factored_vocabs)
 
         self.config = config
+
+    # def generate(
+    #     self,
+    #     input_ids: torch.LongTensor,
+    #     attention_mask: torch.LongTensor,
+    #     max_new_tokens: int,
+    #     min_new_tokens: int = None,
+    #     return_logits: int = False,
+    #     maskgit_steps: int = 1,
+    #     temperature: float = 0.0,
+    # ) -> tuple[torch.LongTensor, torch.FloatTensor]:
+    #     """
+    #     Args designed to match the format of Llama.
+    #     We ignore `attention_mask`, and use `max_new_tokens` to determine the number of frames to generate.
+
+    #     Returns: `(sample_THW, factored_logits)` if `return_logits` else `sample_THW`
+    #         sample_THW: size (B, num_new_frames * H * W) corresponding to autoregressively generated
+    #             unfactorized token ids for future frames.
+    #         Optionally, factored_logits: size (B, factored_vocab_size, num_factored_vocabs, num_new_frames, H, W).
+    #     """
+    #     assert min_new_tokens in (None, max_new_tokens), \
+    #         "Expecting `min_new_tokens`, if specified, to match `max_new_tokens`."
+
+    #     assert max_new_tokens % self.config.S == 0, "Expecting `max_new_tokens` to be a multiple of `self.config.S`."
+    #     num_new_frames = max_new_tokens // self.config.S
+
+    #     inputs_THW = rearrange(input_ids.clone(), "b (t h w) -> b t h w", h=self.h, w=self.w)
+    #     inputs_masked_THW = torch.cat([
+    #         inputs_THW,
+    #         torch.full((input_ids.size(0), num_new_frames, self.h, self.w),
+    #                    self.mask_token_id, dtype=torch.long, device=input_ids.device)
+    #     ], dim=1)
+
+    #     all_factored_logits = []
+    #     for timestep in range(inputs_THW.size(1), inputs_THW.size(1) + num_new_frames):
+    #         # could change sampling hparams
+    #         sample_HW, factored_logits = self.maskgit_generate(
+    #             inputs_masked_THW,
+    #             timestep,
+    #             maskgit_steps=maskgit_steps,
+    #             temperature=temperature
+    #         )
+    #         inputs_masked_THW[:, timestep] = sample_HW
+    #         all_factored_logits.append(factored_logits)
+
+    #     predicted_tokens = rearrange(inputs_masked_THW, "B T H W -> B (T H W)")
+    #     if return_logits:
+    #         return predicted_tokens, torch.stack(all_factored_logits, dim=3)  # (b, factored_vocab_size, num_factored_vocabs, num_new_frames, h, w)
+    #     else:
+    #         return predicted_tokens
 
     def generate(
         self,
@@ -252,23 +334,90 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
         # only optimize on the masked/noised logits?
         return relevant_loss, relevant_acc
 
-    def compute_logits(self, x_THW):
+    # def compute_logits(self, x_THW):
+    #     # x_THW is for z0,...,zT while x_targets is z1,...,zT
+    #     x_TS = rearrange(x_THW, "B T H W -> B T (H W)")
+    #     x_TSC = self.token_embed(x_TS)
+
+    #     # additive embeddings, using the same vocab space
+    #     x_TSC = self.decoder(x_TSC + self.pos_embed_TSC)
+    #     x_next_TSC = self.out_x_proj(x_TSC)
+
+    #     logits_CTHW = rearrange(x_next_TSC, "B T (H W) C -> B C T H W", H=self.h, W=self.w)
+    #     return logits_CTHW
+
+    # def forward(self, input_ids, labels):
+    #     T, H, W = self.config.T, self.h, self.w
+    #     x_THW = rearrange(input_ids, "B (T H W) -> B T H W", T=T, H=H, W=W)
+
+    #     logits_CTHW = self.compute_logits(x_THW)
+
+    #     labels = rearrange(labels, "B (T H W) -> B T H W", T=T, H=H, W=W)
+
+    #     # Record the loss over masked tokens only to make it more comparable to LLM baselines
+    #     relevant_mask = x_THW[:, 1:] == self.mask_token_id  # could also get mask of corrupted tokens by uncommenting line in `get_maskgit_collator`
+    #     relevant_loss, relevant_acc = self.compute_loss_and_acc(logits_CTHW, labels, relevant_mask)
+
+    #     return ModelOutput(loss=relevant_loss, acc=relevant_acc, logits=logits_CTHW)
+    
+    
+    # # "input_ids": x,
+    #         "driving_command": driving_command,
+    #         "joint_pos": joint_pos,
+    #         "l_hand_closure": l_hand_closure,
+    #         "neck_desired": neck_desired,
+    #         "r_hand_closure": r_hand_closure,
+    #         "labels": x,
+    #         "attention_mask": attention_mask,
+    
+
+    def compute_logits(self, x_THW, driving_commandTHW, joint_posTHW, l_hand_closureTHW, neck_desiredTHW, r_hand_closureTHW):
         # x_THW is for z0,...,zT while x_targets is z1,...,zT
         x_TS = rearrange(x_THW, "B T H W -> B T (H W)")
         x_TSC = self.token_embed(x_TS)
+        
+        driving_command_TS = rearrange(driving_commandTHW, "B T H W -> B T (H W)")
+        driving_command_TSC = self.driving_command_token_embed(driving_command_TS)
+        x_TSC+=driving_command_TSC
 
+        
+        joint_pos_TS = rearrange(joint_posTHW, "B T H W -> B T (H W)")
+        joint_pos_TSC = self.joint_pos_token_embed(joint_pos_TS)
+        x_TSC+=joint_pos_TSC
+        
+        l_hand_closure_TS = rearrange(l_hand_closureTHW, "B T H W -> B T (H W)")
+        l_hand_closure_TSC = self.l_hand_closure_token_embed(l_hand_closure_TS)
+        x_TSC+=l_hand_closure_TSC
+        
+        neck_desired_TS = rearrange(neck_desiredTHW, "B T H W -> B T (H W)")
+        neck_desired_TSC = self.neck_desired_token_embed(neck_desired_TS)
+        x_TSC+=neck_desired_TSC
+        
+        
+        r_hand_closure_TS = rearrange(r_hand_closureTHW, "B T H W -> B T (H W)")
+        r_hand_closure_TSC = self.r_hand_closure_token_embed(r_hand_closure_TS)
+        x_TSC+=r_hand_closure_TSC
+        
+        
         # additive embeddings, using the same vocab space
         x_TSC = self.decoder(x_TSC + self.pos_embed_TSC)
         x_next_TSC = self.out_x_proj(x_TSC)
 
         logits_CTHW = rearrange(x_next_TSC, "B T (H W) C -> B C T H W", H=self.h, W=self.w)
         return logits_CTHW
-
-    def forward(self, input_ids, labels):
+    
+    
+    def forward(self, input_ids, driving_command, joint_pos, l_hand_closure, neck_desired, r_hand_closure, labels):
         T, H, W = self.config.T, self.h, self.w
         x_THW = rearrange(input_ids, "B (T H W) -> B T H W", T=T, H=H, W=W)
-
-        logits_CTHW = self.compute_logits(x_THW)
+        driving_commandTHW = rearrange(driving_command, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        joint_posTHW = rearrange(joint_pos, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        l_hand_closureTHW = rearrange(l_hand_closure, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        neck_desiredTHW = rearrange(neck_desired, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        r_hand_closureTHW = rearrange(r_hand_closure, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        
+        
+        logits_CTHW = self.compute_logits(x_THW,driving_commandTHW, joint_posTHW, l_hand_closureTHW, neck_desiredTHW, r_hand_closureTHW)
 
         labels = rearrange(labels, "B (T H W) -> B T H W", T=T, H=H, W=W)
 

@@ -37,7 +37,7 @@ class FactorizedEmbedding(nn.Module):
         """
         # initialize all embeddings to the mask token embedding, and then fill in actual token embeddings
         embeds = self.mask_token_embed.repeat(input_ids.size() + (1,))
-        is_not_mask = input_ids != self.mask_token_id
+        is_not_mask = input_ids != self.mask_token_id 
 
         factored_token_ids = factorize_token_ids(
             input_ids[is_not_mask], self.num_factored_vocabs, self.factored_vocab_size

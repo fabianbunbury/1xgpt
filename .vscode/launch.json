@@ -1,0 +1,129 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        //  this is the command i want to run and debug 
+        // python genie/evaluate.py --checkpoint_dir /home/fabian/Desktop/crossformer/X1/1xgpt/models/models--1x-technologies--GENIE_35M/snapshots/1c0316312af89fdcbb464fed382223485c766d5b/
+
+
+        // python train.py --genie_config genie/configs/magvit_n32_h8_d256.json --output_dir data/genie_model --max_eval_steps 10
+        {
+            "name": "Train",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "args": [
+            "--genie_config",
+            "${workspaceFolder}/genie/configs/magvit_n32_h8_d256.json",
+            "--output_dir",
+            "${workspaceFolder}/data/genie_model",
+            "--max_eval_steps",
+            "10",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "train_with_actions",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train_with_actions.py",
+            "noDebug": true,  // This disables debugging mode
+            "args": [
+            "--genie_config",
+            "${workspaceFolder}/genie/configs/magvit_n16_h4_d256.json",
+            "--output_dir",
+            "${workspaceFolder}/data/genie_model",
+            "--max_eval_steps",
+            "10",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Resume",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "args": [
+            "--resume_from_checkpoint",
+            "/home/fabian/Desktop/crossformer/X1/1xgpt/data/genie_model/step_58000/",
+            "--genie_config",
+            "${workspaceFolder}/genie/configs/magvit_n32_h8_d256.json",
+            "--output_dir",
+            "${workspaceFolder}/data/genie_model",
+            "--max_eval_steps",
+            "10",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: Evaluate Genie",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/genie/evaluate_and_heatmap.py",
+            "args": [
+            "--checkpoint_dir",
+            "/home/fabian/Desktop/crossformer/X1/1xgpt/models/models--1x-technologies--GENIE_35M/snapshots/1c0316312af89fdcbb464fed382223485c766d5b/"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Evaluate_normal",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/genie/evaluate.py",
+            "args": [
+            "--checkpoint_dir",
+            "${workspaceFolder}/models/GENIE_138M/",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        // the followign runs this command python visualize.py --token_dir data/genie_generated
+        {
+            "name": "vizualise",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/visualize.py",
+            "args": [
+            "--token_dir",
+            "data/genie_generated"
+            ],
+            "console": "integratedTerminal"
+        },
+
+        {
+            "name": "Eval_Token_generation",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/genie/generate.py",
+            "args": [
+            "--checkpoint_dir",
+            "${workspaceFolder}/models/GENIE_138M/"
+            ],
+            "console": "integratedTerminal"
+        },
+        // python visualize.py --token_dir data/genie_generated
+        {
+            "name": "Tokens_to_Images",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/visualize.py",
+            "args": [
+            "--token_dir",
+            "${workspaceFolder}/data/genie_generated"
+            ],
+            "console": "integratedTerminal"
+        }
+
+
+        ]
+
+    }
