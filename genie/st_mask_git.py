@@ -59,32 +59,32 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
         
         self.driving_command_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
             factored_vocab_size=400,
-            num_factored_vocabs=1,
+            num_factored_vocabs=2,
             d_model=config.d_model,
             mask_token_id=self.mask_token_id,
         )
 
         self.joint_pos_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
             factored_vocab_size=400,
-            num_factored_vocabs=1,
+            num_factored_vocabs=2,
             d_model=config.d_model,
             mask_token_id=self.mask_token_id,
         )
         self.l_hand_closure_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
             factored_vocab_size=400,
-            num_factored_vocabs=1,
+            num_factored_vocabs=2,
             d_model=config.d_model,
             mask_token_id=self.mask_token_id,
         )
         self.r_hand_closure_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
             factored_vocab_size=400,
-            num_factored_vocabs=1,
+            num_factored_vocabs=2,
             d_model=config.d_model,
             mask_token_id=self.mask_token_id,
         )
         self.neck_desired_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
             factored_vocab_size=400,
-            num_factored_vocabs=1,
+            num_factored_vocabs=2,
             d_model=config.d_model,
             mask_token_id=self.mask_token_id,
         )
