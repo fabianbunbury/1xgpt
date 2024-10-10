@@ -337,7 +337,7 @@ def main():
         level=logging.INFO,
     )
     logger.info(accelerator.state, main_process_only=False)
-    if accelerator.is_local_main_process:
+    if accelerator.is_local_main_process: ## this seems totaly redundant. 
         transformers.utils.logging.set_verbosity_info()
     else:
         transformers.utils.logging.set_verbosity_error()
@@ -345,10 +345,10 @@ def main():
     if args.seed is not None:
         set_seed(args.seed)
 
-    if accelerator.is_main_process:
+    if accelerator.is_main_process: # this is redundant.
         os.makedirs(args.output_dir, exist_ok=True)
 
-    accelerator.wait_for_everyone()
+    accelerator.wait_for_everyone() # this is redundant 
 
     train_dataset = RawTokenDataset(args.train_data_dir, window_size=args.window_size,
                                     stride=args.stride, filter_overlaps=args.filter_overlaps)
@@ -563,7 +563,7 @@ def main():
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
-        if args.resume_from_checkpoint is not None or args.resume_from_checkpoint != "":
+        if args.resume_from_checkpoint is not None or args.resume_from_checkpoint != "": ## fabian: why or condition? seems like it should be and . 
             checkpoint_path = args.resume_from_checkpoint
             path = os.path.basename(args.resume_from_checkpoint.rstrip("/"))
         else:

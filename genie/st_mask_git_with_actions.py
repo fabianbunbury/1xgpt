@@ -26,7 +26,7 @@ def cosine_schedule(u):
         raise NotImplementedError(f"Unexpected {type(u)=} {u=}")
 
     return cls.cos(u * cls.pi / 2)
-
+scaling_factor = nn.Parameter(torch.tensor(0.01), requires_grad=True)
 
 class STMaskGIT(nn.Module, PyTorchModelHubMixin):
     # Next-Token prediction as done in https://arxiv.org/pdf/2402.15391.pdf
@@ -48,6 +48,7 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
             mlp_bias=config.mlp_bias,
             mlp_drop=config.mlp_drop,
         )
+
         self.pos_embed_TSC = torch.nn.Parameter(torch.zeros(1, config.T, config.S, config.d_model))
         self.mask_token_id = config.image_vocab_size
 
@@ -57,13 +58,96 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
             d_model=config.d_model,
             mask_token_id=self.mask_token_id,
         )
+        
+        self.driving_command_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=2,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
 
+        self.joint_pos_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=2,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
+        self.l_hand_closure_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=2,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
+        self.r_hand_closure_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=2,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
+        self.neck_desired_token_embed = FactorizedEmbedding(  # also works for num_factored_vocabs = 1
+            factored_vocab_size=400,
+            num_factored_vocabs=2,
+            d_model=config.d_model,
+            mask_token_id=self.mask_token_id,
+        )
+        
+        # self.scaling_factor = nn.Parameter(torch.tensor(0.01), requires_grad=True)
+
+        
         cls = FixedMuReadout if config.use_mup else nn.Linear  # (Fixed)MuReadout might slow dow down compiled training?
         self.out_x_proj = cls(config.d_model, config.factored_vocab_size * config.num_factored_vocabs)
-        # the final layer will be a matrix multiplication to take the logits to the shape the quantived embedings
-        self.quant_layer = cls(config.d_model, 18)
 
         self.config = config
+
+    # def generate(
+    #     self,
+    #     input_ids: torch.LongTensor,
+    #     attention_mask: torch.LongTensor,
+    #     max_new_tokens: int,
+    #     min_new_tokens: int = None,
+    #     return_logits: int = False,
+    #     maskgit_steps: int = 1,
+    #     temperature: float = 0.0,
+    # ) -> tuple[torch.LongTensor, torch.FloatTensor]:
+    #     """
+    #     Args designed to match the format of Llama.
+    #     We ignore `attention_mask`, and use `max_new_tokens` to determine the number of frames to generate.
+
+    #     Returns: `(sample_THW, factored_logits)` if `return_logits` else `sample_THW`
+    #         sample_THW: size (B, num_new_frames * H * W) corresponding to autoregressively generated
+    #             unfactorized token ids for future frames.
+    #         Optionally, factored_logits: size (B, factored_vocab_size, num_factored_vocabs, num_new_frames, H, W).
+    #     """
+    #     assert min_new_tokens in (None, max_new_tokens), \
+    #         "Expecting `min_new_tokens`, if specified, to match `max_new_tokens`."
+
+    #     assert max_new_tokens % self.config.S == 0, "Expecting `max_new_tokens` to be a multiple of `self.config.S`."
+    #     num_new_frames = max_new_tokens // self.config.S
+
+    #     inputs_THW = rearrange(input_ids.clone(), "b (t h w) -> b t h w", h=self.h, w=self.w)
+    #     inputs_masked_THW = torch.cat([
+    #         inputs_THW,
+    #         torch.full((input_ids.size(0), num_new_frames, self.h, self.w),
+    #                    self.mask_token_id, dtype=torch.long, device=input_ids.device)
+    #     ], dim=1)
+
+    #     all_factored_logits = []
+    #     for timestep in range(inputs_THW.size(1), inputs_THW.size(1) + num_new_frames):
+    #         # could change sampling hparams
+    #         sample_HW, factored_logits = self.maskgit_generate(
+    #             inputs_masked_THW,
+    #             timestep,
+    #             maskgit_steps=maskgit_steps,
+    #             temperature=temperature
+    #         )
+    #         inputs_masked_THW[:, timestep] = sample_HW
+    #         all_factored_logits.append(factored_logits)
+
+    #     predicted_tokens = rearrange(inputs_masked_THW, "B T H W -> B (T H W)")
+    #     if return_logits:
+    #         return predicted_tokens, torch.stack(all_factored_logits, dim=3)  # (b, factored_vocab_size, num_factored_vocabs, num_new_frames, h, w)
+    #     else:
+    #         return predicted_tokens
 
     def generate(
         self,
@@ -230,44 +314,7 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
             orig_logits_CHW, "B (num_vocabs vocab_size) H W -> B vocab_size num_vocabs H W",
             vocab_size=self.config.factored_vocab_size, num_vocabs=self.config.num_factored_vocabs, H=h, W=w
         )
-    def compute_loss_and_acc_with_quantized(self, logits_CTHW, targets_THW, relevant_mask_THW, logits_QTHW, labels_as_bits ):
-         # Video token prediction
-        targets_THW = targets_THW.clone()
-        logits_CTHW, targets_THW = logits_CTHW[:, :, 1:], targets_THW[:, 1:]  # first frame always unmasked
-        logits_QTHW, labels_as_bits = logits_QTHW[:, :, 1:], labels_as_bits[:, 1:]  # first frame always unmasked
-        
-        factored_logits = rearrange(logits_CTHW,
-                                    "b (num_vocabs vocab_size) t h w -> b vocab_size num_vocabs t h w",
-                                    vocab_size=self.config.factored_vocab_size,
-                                    num_vocabs=self.config.num_factored_vocabs)
-        
 
-        factored_targets = factorize_labels(targets_THW)
-
-        loss_THW = F.cross_entropy(factored_logits, factored_targets, reduction="none").sum(dim=1)
-        acc_THW = (factored_logits.argmax(dim=1) == factored_targets).all(dim=1)
-        
-        # need to reshape labes to B Q T H W
-        labels_as_bits = rearrange(labels_as_bits, "B T H W Q -> B Q T H W")
-        
-        loss_QTHW = F.mse_loss(logits_QTHW, labels_as_bits, reduction="none").sum(dim=1)
-
-        # Compute the mean masked error.
-        # Multiply loss values by mask instead of indexing them, more computationally efficient.
-        num_masked_tokens = torch.sum(relevant_mask_THW)
-        relevant_loss_origional = torch.sum(loss_THW * relevant_mask_THW) / num_masked_tokens
-        relevant_loss_quant = torch.sum(loss_QTHW * relevant_mask_THW) / num_masked_tokens
-        relevant_acc = torch.sum(acc_THW * relevant_mask_THW).float() / num_masked_tokens
-        
-        weighted_combined_loss = relevant_loss_origional + relevant_loss_quant
-        #for debuggin i will print both loss functions
-        print(f"relevant_loss: {relevant_loss_origional}")
-        print(f"loss_QTHW: {relevant_loss_quant}")
-        
-
-        # only optimize on the masked/noised logits?
-        return weighted_combined_loss,relevant_loss_origional, relevant_acc
-        
     def compute_loss_and_acc(self, logits_CTHW, targets_THW, relevant_mask_THW):
         # Video token prediction
         targets_THW = targets_THW.clone()
@@ -291,12 +338,71 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
 
         # only optimize on the masked/noised logits?
         return relevant_loss, relevant_acc
+
+    # def compute_logits(self, x_THW):
+    #     # x_THW is for z0,...,zT while x_targets is z1,...,zT
+    #     x_TS = rearrange(x_THW, "B T H W -> B T (H W)")
+    #     x_TSC = self.token_embed(x_TS)
+
+    #     # additive embeddings, using the same vocab space
+    #     x_TSC = self.decoder(x_TSC + self.pos_embed_TSC)
+    #     x_next_TSC = self.out_x_proj(x_TSC)
+
+    #     logits_CTHW = rearrange(x_next_TSC, "B T (H W) C -> B C T H W", H=self.h, W=self.w)
+    #     return logits_CTHW
+
+    # def forward(self, input_ids, labels):
+    #     T, H, W = self.config.T, self.h, self.w
+    #     x_THW = rearrange(input_ids, "B (T H W) -> B T H W", T=T, H=H, W=W)
+
+    #     logits_CTHW = self.compute_logits(x_THW)
+
+    #     labels = rearrange(labels, "B (T H W) -> B T H W", T=T, H=H, W=W)
+
+    #     # Record the loss over masked tokens only to make it more comparable to LLM baselines
+    #     relevant_mask = x_THW[:, 1:] == self.mask_token_id  # could also get mask of corrupted tokens by uncommenting line in `get_maskgit_collator`
+    #     relevant_loss, relevant_acc = self.compute_loss_and_acc(logits_CTHW, labels, relevant_mask)
+
+    #     return ModelOutput(loss=relevant_loss, acc=relevant_acc, logits=logits_CTHW)
     
-    def compute_logits(self, x_THW):
+    
+    # # "input_ids": x,
+    #         "driving_command": driving_command,
+    #         "joint_pos": joint_pos,
+    #         "l_hand_closure": l_hand_closure,
+    #         "neck_desired": neck_desired,
+    #         "r_hand_closure": r_hand_closure,
+    #         "labels": x,
+    #         "attention_mask": attention_mask,
+    
+
+    def compute_logits(self, x_THW, driving_commandTHW, joint_posTHW, l_hand_closureTHW, neck_desiredTHW, r_hand_closureTHW):
         # x_THW is for z0,...,zT while x_targets is z1,...,zT
         x_TS = rearrange(x_THW, "B T H W -> B T (H W)")
         x_TSC = self.token_embed(x_TS)
+        
+        driving_command_TS = rearrange(driving_commandTHW, "B T H W -> B T (H W)")
+        driving_command_TSC = self.driving_command_token_embed(driving_command_TS)
+        x_TSC+=driving_command_TSC*scaling_factor 
 
+        
+        joint_pos_TS = rearrange(joint_posTHW, "B T H W -> B T (H W)")
+        joint_pos_TSC = self.joint_pos_token_embed(joint_pos_TS)
+        x_TSC+=joint_pos_TSC*scaling_factor 
+        
+        l_hand_closure_TS = rearrange(l_hand_closureTHW, "B T H W -> B T (H W)")
+        l_hand_closure_TSC = self.l_hand_closure_token_embed(l_hand_closure_TS)
+        x_TSC+=l_hand_closure_TSC*scaling_factor 
+        
+        neck_desired_TS = rearrange(neck_desiredTHW, "B T H W -> B T (H W)")
+        neck_desired_TSC = self.neck_desired_token_embed(neck_desired_TS)
+        x_TSC+=neck_desired_TSC*scaling_factor 
+        
+        
+        r_hand_closure_TS = rearrange(r_hand_closureTHW, "B T H W -> B T (H W)")
+        r_hand_closure_TSC = self.r_hand_closure_token_embed(r_hand_closure_TS)
+        x_TSC+=r_hand_closure_TSC*scaling_factor 
+        
         # additive embeddings, using the same vocab space
         x_TSC = self.decoder(x_TSC + self.pos_embed_TSC)
         x_next_TSC = self.out_x_proj(x_TSC)
@@ -304,80 +410,26 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
         logits_CTHW = rearrange(x_next_TSC, "B T (H W) C -> B C T H W", H=self.h, W=self.w)
         return logits_CTHW
     
-
-    def compute_logits_with_quantized(self, x_THW):
-        # x_THW is for z0,...,zT while x_targets is z1,...,zT
-        x_TS = rearrange(x_THW, "B T H W -> B T (H W)")
-        calculate_bits = self.index_to_bits(rearrange(x_THW, "B T H W -> B (T H W)"))
-        # rearange bits to B T (H W) Q
-        calculate_bits = rearrange(calculate_bits, "B (T H W) Q -> B T (H W) Q", H=self.h, W=self.w)
-      
-        x_TSC = self.token_embed(x_TS)
-        
-        # padout bits to be the same size as embedings
-        calculate_bits = F.pad(calculate_bits, (0, x_TSC.size(-1) - calculate_bits.size(-1)))
-        # for debugging i will print the dimensions of x_TS and calculate_bits
-        print(f"x_TS: {x_TS.size()}")
-        print(f"calculate_bits: {calculate_bits.size()}")
-        # additive embeddings, using the same vocab space
-        
-        x_TSC = self.decoder(x_TSC + self.pos_embed_TSC+calculate_bits)
-        x_next_TSC = self.out_x_proj(x_TSC)
-        x_next_quant = self.quant_layer(x_TSC)
-
-        logits_CTHW = rearrange(x_next_TSC, "B T (H W) C -> B C T H W", H=self.h, W=self.w)
-        logits_QTHW = rearrange(x_next_quant, "B T (H W) Q -> B Q T H W", H=self.h, W=self.w)
-
-        return logits_CTHW, logits_QTHW
-
-
-    def index_to_bits(self, x):
-        """
-        x: long tensor of indices for constructing codebook, but actually not utilized in all the experiments.
-
-        returns big endian bits
-        """
-        with torch.no_grad():
-            mask = 2 ** torch.arange(18, device=x.device, dtype=torch.long)
-            # x is now big endian bits, the last dimension being the bits
-            x = (x.unsqueeze(-1) & mask) != 0
-            #convert to a torch float32
-            x = x.to(torch.float32)
-        return x
-
-    def forward_quantized(self, input_ids, labels):
+    
+    def forward(self, input_ids, driving_command, joint_pos, l_hand_closure, neck_desired, r_hand_closure, labels):
         T, H, W = self.config.T, self.h, self.w
         x_THW = rearrange(input_ids, "B (T H W) -> B T H W", T=T, H=H, W=W)
-
-        logits_CTHW, logits_QTHW = self.compute_logits_with_quantized(x_THW)
-
-        labels = rearrange(labels, "B (T H W) -> B T H W", T=T, H=H, W=W)
-        labels_as_bits = self.index_to_bits(labels)
-
-        # Record the loss over masked tokens only to make it more comparable to LLM baselines
-        relevant_mask = x_THW[:, 1:] == self.mask_token_id  # could also get mask of corrupted tokens by uncommenting line in `get_maskgit_collator`
-        # relevant_loss, relevant_acc = self.compute_loss_and_acc(logits_CTHW, labels, relevant_mask)
-        relevant_loss,regular_loss, relevant_acc = self.compute_loss_and_acc_with_quantized(logits_CTHW, labels, relevant_mask,logits_QTHW, labels_as_bits)
-
-        return ModelOutput(loss=relevant_loss, regular_loss = regular_loss, acc=relevant_acc, logits=logits_CTHW)
-    
-    
-    def forward(self, input_ids, labels):
-        T, H, W = self.config.T, self.h, self.w
-        x_THW = rearrange(input_ids, "B (T H W) -> B T H W", T=T, H=H, W=W)
-
-        logits_CTHW = self.compute_logits(x_THW)
+        driving_commandTHW = rearrange(driving_command, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        joint_posTHW = rearrange(joint_pos, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        l_hand_closureTHW = rearrange(l_hand_closure, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        neck_desiredTHW = rearrange(neck_desired, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        r_hand_closureTHW = rearrange(r_hand_closure, "B (T H W) -> B T H W", T=T, H=H, W=W)
+        
+        
+        logits_CTHW = self.compute_logits(x_THW,driving_commandTHW, joint_posTHW, l_hand_closureTHW, neck_desiredTHW, r_hand_closureTHW)
 
         labels = rearrange(labels, "B (T H W) -> B T H W", T=T, H=H, W=W)
-        # labels_as_bits = self.index_to_bits(labels)
 
         # Record the loss over masked tokens only to make it more comparable to LLM baselines
         relevant_mask = x_THW[:, 1:] == self.mask_token_id  # could also get mask of corrupted tokens by uncommenting line in `get_maskgit_collator`
         relevant_loss, relevant_acc = self.compute_loss_and_acc(logits_CTHW, labels, relevant_mask)
-        # relevant_loss, relevant_acc = self.compute_loss_and_acc_with_quantized(logits_CTHW, labels, relevant_mask,logits_QTHW, labels_as_bits)
 
         return ModelOutput(loss=relevant_loss, acc=relevant_acc, logits=logits_CTHW)
-
 
     def init_weights(self):
         """ Works with and without muP. """

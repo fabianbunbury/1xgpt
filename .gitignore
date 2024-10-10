@@ -5,4 +5,10 @@ data/
 .idea/
 subsample_val.py
 wandb/
-models/
+
+images/
+SOURCES.txt
+top_level.txt
+PKG-INFO
+dependency_links.txt
+*.mp4

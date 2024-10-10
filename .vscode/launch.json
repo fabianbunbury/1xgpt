@@ -25,6 +25,23 @@
             "console": "integratedTerminal"
         },
         {
+            "name": "Resume",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "args": [
+            "--resume_from_checkpoint",
+            "/home/fabian/Desktop/crossformer/X1/1xgpt/data/genie_model/step_7000",
+            "--genie_config",
+            "${workspaceFolder}/genie/configs/magvit_n32_h8_d256.json",
+            "--output_dir",
+            "${workspaceFolder}/data/genie_model",
+            "--max_eval_steps",
+            "10",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
             "name": "train_with_actions",
             "type": "debugpy",
             "request": "launch",
@@ -41,15 +58,16 @@
             "console": "integratedTerminal"
         },
         {
-            "name": "Resume",
+            "name": "Resume_from_1X_best",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/train.py",
+            "program": "${workspaceFolder}/train_with_actions.py",
+            "noDebug": true,  // This disables debugging mode
             "args": [
             "--resume_from_checkpoint",
-            "/home/fabian/Desktop/crossformer/X1/1xgpt/data/genie_model/step_58000/",
+            "/home/fabian/Desktop/crossformer/X1/1xgpt/models/Genie_35/step_1",
             "--genie_config",
-            "${workspaceFolder}/genie/configs/magvit_n32_h8_d256.json",
+            "/home/fabian/Desktop/crossformer/X1/1xgpt/models/Genie_35/step_1/config.json",
             "--output_dir",
             "${workspaceFolder}/data/genie_model",
             "--max_eval_steps",
@@ -75,7 +93,7 @@
             "program": "${workspaceFolder}/genie/evaluate.py",
             "args": [
             "--checkpoint_dir",
-            "${workspaceFolder}/models/GENIE_138M/",
+            "${workspaceFolder}/models/archive/GENIE_138M/",
             ],
             "console": "integratedTerminal"
         },
@@ -106,7 +124,7 @@
             "program": "${workspaceFolder}/genie/generate.py",
             "args": [
             "--checkpoint_dir",
-            "${workspaceFolder}/models/GENIE_138M/"
+            "${workspaceFolder}/models/archive/GENIE_138M/"
             ],
             "console": "integratedTerminal"
         },
@@ -121,7 +139,22 @@
             "${workspaceFolder}/data/genie_generated"
             ],
             "console": "integratedTerminal"
+        },
+
+        {
+            "name": "Convert_Aloha_video_to_tokens",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/data/raw_data/visualise_aloha.py",
+            "args": [
+            "--dataset_dir",
+            "${workspaceFolder}/data/raw_data/aloha",
+            "--episode_idx",
+            "0",
+            ],
+            "console": "integratedTerminal"
         }
+
 
 
         ]

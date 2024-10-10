@@ -193,6 +193,28 @@ class LFQ(Module):
         x = rearrange(x, "b h w c -> b c h w")
         return x
 
+    def get_codebook_indices(self, x):
+        """
+        x: tensor of shape (b, c, h, w)
+        
+        returns: codebook indices
+        """
+        x = rearrange(x, "b c h w -> b h w c")
+        b, h, w, c = x.shape
+        x = rearrange(x, "b h w c -> b (h w) c")
+        
+        if self.token_factorization:
+            k = self.codebook_dim // 2
+            mask = 2 ** torch.arange(k - 1, -1, -1, device=x.device, dtype=torch.long)
+        else:
+            mask = 2 ** torch.arange(self.codebook_dim - 1, -1, -1, device=x.device, dtype=torch.long)
+        
+        x = (x + 1.0) / 2.0  # convert back to bits
+        x = x.long()
+        x = (x * mask).sum(-1)
+        
+        return x
+
     def bits_to_indices(self, bits):
         """
         bits: bool tensor of big endian bits, where the last dimension is the bit dimension

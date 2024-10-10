@@ -91,6 +91,19 @@ def rescale_magvit_output(magvit_output):
     clipped_output = torch.clamp(rescaled_output, 0, 255).to(dtype=torch.uint8)
     return clipped_output
 
+def rescale_magvit_input(magvit_input: torch.Tensor):
+    """
+    Rescale input from [0, 255] to [-1, 1].
+
+    Args:
+    - magvit_input (torch.Tensor): Input tensor with dtype torch.float32, torch.float64, or torch.bfloat16.
+
+    Returns:
+    - torch.Tensor: Rescaled tensor.
+    """
+    assert magvit_input.dtype in (torch.float32, torch.float64, torch.bfloat16), "Input must be of type torch.Tensor with dtype torch.float32, torch.float64, or torch.bfloat16"
+    return (magvit_input / 127.5) - 1
+
 
 def decode_latents_wrapper(batch_size=16, tokenizer_ckpt="data/magvit2.ckpt", max_images=None):
     device = "cuda"
@@ -120,6 +133,45 @@ def decode_latents_wrapper(batch_size=16, tokenizer_ckpt="data/magvit2.ckpt", ma
         return [transforms_f.to_pil_image(img) for img in torch.cat(decoded_imgs)]
 
     return decode_latents
+
+def encode_latents_wrapper(batch_size=8, tokenizer_ckpt="data/magvit2.ckpt"):
+    device = "cuda"
+    dtype = torch.bfloat16
+
+    model_config = VQConfig()
+    model = VQModel(model_config, ckpt_path=tokenizer_ckpt)
+    model = model.to(device=device, dtype=dtype)
+    model.eval()
+
+    @torch.no_grad()
+    def encode_latents(video_data: torch.Tensor):
+        """
+        video_data: (t, c, h, w), where t is the number of frames, c is the number of channels, h is height, and w is width.
+        it is a tensor 
+        """
+        bit_quantised_tokens_batch_list = []
+        
+        # check if data is on the same device as the model
+        if video_data.device != device:
+            video_data = video_data.to(device=device, dtype=dtype)
+        video_data = rescale_magvit_input(video_data)
+        # because the data is to large to fit in the model at once, we need to split the data up 
+        for shard_ind in range(math.ceil(len(video_data) / batch_size)):
+            batch = video_data[shard_ind * batch_size: (shard_ind + 1) * batch_size]
+            # encode the video data and append the encoded latents to the list
+            with model.ema_scope():
+                bit_quantised_tokens_batch =model.encode(batch)[0]
+            #appedn the data to the list
+            bit_quantised_tokens_batch_list.append(bit_quantised_tokens_batch)
+            
+        bit_quantised_tokens= torch.cat(bit_quantised_tokens_batch_list).flip(1)
+        # rearrange the encoded latents to b (h w) c
+        # bit_quantised_tokens = rearrange(bit_quantised_tokens, "b c h w -> b (h w) c")
+        #quantise the encoded latents
+        tokens = model.quantize.get_codebook_indices(bit_quantised_tokens)
+        return tokens
+    return encode_latents
+    
 
 
 def caption_image(pil_image: Image, caption: str):

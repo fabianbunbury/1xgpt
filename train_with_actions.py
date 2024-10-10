@@ -23,9 +23,9 @@ from transformers import (
     get_scheduler,
 )
 
-from data import RawTokenDatasetObsAction, get_maskgit_collator
+from data import RawTokenDatasetObsAction, get_maskgit_collator_obs_actions
 from eval_utils import decode_tokens, compute_lpips
-from genie.st_mask_git import GenieConfig, STMaskGIT
+from genie.st_mask_git_with_actions import GenieConfig, STMaskGIT
 # from llama.config import LlamaConfig1X
 # from llama.modeling_llama_mup import LlamaForCausalLM
 from visualize import decode_latents_wrapper
@@ -441,7 +441,7 @@ def main():
                           betas=(args.adam_beta_1, args.adam_beta_2), eps=args.adam_eps)
 
     # DataLoaders creation:
-    collate_fn = default_data_collator if args.llama_config is not None else get_maskgit_collator(config)
+    collate_fn = default_data_collator if args.llama_config is not None else get_maskgit_collator_obs_actions(config)
     train_dataloader = DataLoader(
         train_dataset, shuffle=True, collate_fn=collate_fn,
         batch_size=args.per_device_train_batch_size, num_workers=4, pin_memory=True,
