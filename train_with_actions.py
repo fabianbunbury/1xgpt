@@ -270,7 +270,7 @@ def visualize(accelerator, model, dataloader, window_size, metrics_prefix="eval"
         num_prompt_frames = window_size // 2  # hardcoding half of frames for context
         num_new_tokens = latent_side_len ** 2 * (window_size - num_prompt_frames)
         prompt_input_ids = rearrange(reshaped_labels[:, :num_prompt_frames], "b t s -> b (t s)")
-        outputs = unwrapped_model.generate(input_ids=prompt_input_ids, attention_mask=torch.ones_like(prompt_input_ids),
+        outputs = unwrapped_model.generate(batch, input_ids=prompt_input_ids, attention_mask=torch.ones_like(prompt_input_ids),
                                            max_new_tokens=num_new_tokens, min_new_tokens=num_new_tokens)
         output_tokens = rearrange(outputs, "b (t h w) -> b t h w", t=window_size,
                                   h=latent_side_len, w=latent_side_len)
@@ -717,11 +717,11 @@ def main():
                 # Switch back to train mode
                 model.train()
 
-            # if completed_steps % args.vis_every_n_steps == 0:
-            #     if not args.overfit_first_batch:  # val is same as train otherwise
-            #         visualize(accelerator, model, eval_dataloader, args.window_size, "val")
+            if completed_steps % args.vis_every_n_steps == 0:
+                if not args.overfit_first_batch:  # val is same as train otherwise
+                    visualize(accelerator, model, eval_dataloader, args.window_size, "val")
 
-            #     visualize(accelerator, model, train_dataloader, args.window_size, "train")
+                visualize(accelerator, model, train_dataloader, args.window_size, "train")
 
             if completed_steps >= args.max_train_steps:
                 break

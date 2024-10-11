@@ -151,6 +151,7 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
 
     def generate(
         self,
+        batch,
         input_ids: torch.LongTensor,
         attention_mask: torch.LongTensor,
         max_new_tokens: int,
@@ -175,6 +176,7 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
         num_new_frames = max_new_tokens // self.config.S
 
         inputs_THW = rearrange(input_ids.clone(), "b (t h w) -> b t h w", h=self.h, w=self.w)
+        #Input tensors contains half true frames hal masked frames that are to be uncovered.
         inputs_masked_THW = torch.cat([
             inputs_THW,
             torch.full((input_ids.size(0), num_new_frames, self.h, self.w),
@@ -185,6 +187,7 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
         for timestep in range(inputs_THW.size(1), inputs_THW.size(1) + num_new_frames):
             # could change sampling hparams
             sample_HW, factored_logits = self.maskgit_generate(
+                batch,
                 inputs_masked_THW,
                 timestep,
                 maskgit_steps=maskgit_steps,
@@ -209,6 +212,7 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
     @torch.no_grad()
     def maskgit_generate(
         self,
+        batch,
         prompt_THW: torch.LongTensor,
         out_t: int,
         maskgit_steps: int = 1,
@@ -237,6 +241,14 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
             sample_HW: size (B, H, W) corresponding to predicted unfactorized token ids for frame `out_t`.
             factored_logits: size (B, factored_vocab_size, num_factored_vocabs, H, W).
         """
+        
+        T, H, W = self.config.T, self.h, self.w
+        driving_commandTHW = rearrange(batch["driving_command"], "B (T H W) -> B T H W", T=T, H=H, W=W)
+        joint_posTHW = rearrange(batch["joint_pos"], "B (T H W) -> B T H W", T=T, H=H, W=W)
+        l_hand_closureTHW = rearrange(batch["l_hand_closure"], "B (T H W) -> B T H W", T=T, H=H, W=W)
+        neck_desiredTHW = rearrange(batch["neck_desired"], "B (T H W) -> B T H W", T=T, H=H, W=W)
+        r_hand_closureTHW = rearrange(batch["r_hand_closure"], "B (T H W) -> B T H W", T=T, H=H, W=W)
+        
         # assume we have pre-masked z{out_t}...zT with all masks
         assert out_t, "maskgit_generate requires out_t > 0"
         assert torch.all(prompt_THW[:, out_t:] == self.mask_token_id), \
@@ -247,13 +259,13 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
         # this will be modified in place on each iteration of this loop
         unmasked = self.init_mask(prompt_THW)
 
-        logits_CTHW = self.compute_logits(prompt_THW)
+        logits_CTHW = self.compute_logits(prompt_THW, driving_commandTHW, joint_posTHW, l_hand_closureTHW, neck_desiredTHW, r_hand_closureTHW)
         logits_CHW = logits_CTHW[:, :, out_t]
         orig_logits_CHW = logits_CHW.clone()  # Return these original logits, not logits after partially sampling.
         for step in tqdm(range(maskgit_steps)):
             # Perform a single maskgit step (cosine schedule), updating unmasked in-place
             if step > 0:  # recompute logits with updated prompt
-                logits_CHW = self.compute_logits(prompt_THW)[:, :, out_t]
+                logits_CHW = self.compute_logits(prompt_THW, driving_commandTHW, joint_posTHW, l_hand_closureTHW, neck_desiredTHW, r_hand_closureTHW)[:, :, out_t]
 
             factored_logits = rearrange(logits_CHW, "b (num_vocabs vocab_size) h w -> b vocab_size num_vocabs h w",
                                         vocab_size=self.config.factored_vocab_size,
@@ -263,6 +275,9 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
 
             samples_HW = torch.zeros((bs, h, w), dtype=torch.long, device=prompt_THW.device)
             confidences_HW = torch.ones((bs, h, w), dtype=torch.float, device=prompt_THW.device)
+            
+            # unbind converts the tensor to a tuple in this case breaking it up along the third dimension.
+            # meanign this for loop will iterate over the  vocabs 
             for probs in factored_probs.flip(2).unbind(2):
                 if temperature <= 1e-8:  # greedy sampling
                     sample = probs.argmax(dim=1)
@@ -272,9 +287,13 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
                         probs=rearrange(probs, "b vocab_size ... -> b ... vocab_size") / temperature
                     )
                     sample = dist.sample()
+                
+                #unfactorise sampled tokens Vocab1*vocab_size + vocab2
                 samples_HW *= self.config.factored_vocab_size
                 samples_HW += sample
                 confidences_HW *= torch.gather(probs, 1, sample.unsqueeze(1)).squeeze(1)
+
+            # samples_HW and confidence contains a full selection of possible tokens and confidences. 
 
             prev_unmasked = unmasked.clone()
             prev_img_flat = rearrange(prompt_THW[:, out_t], "B H W -> B (H W)")
@@ -283,6 +302,7 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
 
             if step != maskgit_steps - 1:  # skip masking for last maskgit step
                 # use cosine mask scheduling function, n is how many of frame out_t to mask
+                # this ceil functiomn is used to round up to the nearest integer
                 n = math.ceil(cosine_schedule((step + 1) / maskgit_steps) * self.config.S)
 
                 if unmask_mode == "greedy":
@@ -296,13 +316,16 @@ class STMaskGIT(nn.Module, PyTorchModelHubMixin):
                     raise NotImplementedError(f"Expected `unmask_mode` to be one of ['greedy', 'random'], "
                                               f"got {unmask_mode}")
 
+                # set the proposals that have already been acssepted to inf to take them out of consideration.
                 confidences_flat[unmasked] = torch.inf
                 least_confident_tokens = torch.argsort(confidences_flat, dim=1)
                 # unmask the (self.config.S - n) most confident tokens
+                # map True the unmasked tensor for all the most confident tokens.
                 unmasked.scatter_(1, least_confident_tokens[:, n:], True)
                 samples_flat.scatter_(1, least_confident_tokens[:, :n], self.mask_token_id)
 
             # copy previously unmasked values from prompt input into sample
+            # so now samples contains all the unmaksed tokens.
             samples_flat[prev_unmasked] = prev_img_flat[prev_unmasked]
             samples_HW = samples_flat.reshape(-1, h, w)
 

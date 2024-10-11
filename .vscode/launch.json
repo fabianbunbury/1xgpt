@@ -31,7 +31,7 @@
             "program": "${workspaceFolder}/train.py",
             "args": [
             "--resume_from_checkpoint",
-            "/home/fabian/Desktop/crossformer/X1/1xgpt/data/genie_model/step_7000",
+            "${workspaceFolder}/models/archive/easy-tree-94/step_389000",
             "--genie_config",
             "${workspaceFolder}/genie/configs/magvit_n32_h8_d256.json",
             "--output_dir",
